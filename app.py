@@ -16,6 +16,45 @@ API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 SB_URL = os.environ.get("SUPABASE_URL", "")
 SB_KEY = os.environ.get("SUPABASE_KEY", "")
 
+# ── Health Server (for Docker / K8s / Fly / Render) ──
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+def start_health_server():
+    class HealthHandler(BaseHTTPRequestHandler):
+        def _json(self, code, payload):
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode())
+
+        def do_GET(self):
+            if self.path == "/health":
+                # Liveness: app process is running
+                self._json(200, {"status": "ok"})
+            elif self.path == "/health/ready":
+                # Readiness: critical deps configured
+                ready = bool(API_KEY) and bool(SB_URL)
+                code = 200 if ready else 503
+                self._json(code, {
+                    "ready": ready,
+                    "anthropic_key": bool(API_KEY),
+                    "supabase_configured": bool(SB_URL),
+                })
+            else:
+                self._json(404, {"error": "not found"})
+
+        def log_message(self, *args):
+            return  # silence logs
+
+    server = HTTPServer(("0.0.0.0", 8081), HealthHandler)
+    server.serve_forever()
+
+# Start once when Streamlit boots
+if "health_server_started" not in st.session_state:
+    threading.Thread(target=start_health_server, daemon=True).start()
+    st.session_state.health_server_started = True
+
 # ── Page Config ──
 st.set_page_config(page_title="Smarty Pants — AI Lending Engine", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 
